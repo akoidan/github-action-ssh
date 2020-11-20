@@ -76,7 +76,7 @@ async function executeCommand(ssh: node_ssh, command: string) {
         console.log(chunk.toString("utf8"));
       }
     });
-
+    console.log("command exited with code "+ code);
     if (code > 0) {
       throw Error(`Command exited with code ${code}`);
     }
