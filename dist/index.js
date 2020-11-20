@@ -251,6 +251,32 @@ module.exports = {
 
 /***/ }),
 
+/***/ 82:
+/***/ (function(__unusedmodule, exports) {
+
+"use strict";
+
+// We use any as a valid input type
+/* eslint-disable @typescript-eslint/no-explicit-any */
+Object.defineProperty(exports, "__esModule", { value: true });
+/**
+ * Sanitizes an input into a string so it can be passed into issueCommand safely
+ * @param input input to sanitize into a string
+ */
+function toCommandValue(input) {
+    if (input === null || input === undefined) {
+        return '';
+    }
+    else if (typeof input === 'string' || input instanceof String) {
+        return input;
+    }
+    return JSON.stringify(input);
+}
+exports.toCommandValue = toCommandValue;
+//# sourceMappingURL=utils.js.map
+
+/***/ }),
+
 /***/ 87:
 /***/ (function(module) {
 
@@ -770,6 +796,42 @@ ServerStderr.prototype._write = function(data, encoding, cb) {
 
 module.exports = Channel;
 
+
+/***/ }),
+
+/***/ 102:
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
+
+"use strict";
+
+// For internal use, subject to change.
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (Object.hasOwnProperty.call(mod, k)) result[k] = mod[k];
+    result["default"] = mod;
+    return result;
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+// We use any as a valid input type
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const fs = __importStar(__webpack_require__(747));
+const os = __importStar(__webpack_require__(87));
+const utils_1 = __webpack_require__(82);
+function issueCommand(command, message) {
+    const filePath = process.env[`GITHUB_${command}`];
+    if (!filePath) {
+        throw new Error(`Unable to find environment variable for file command ${command}`);
+    }
+    if (!fs.existsSync(filePath)) {
+        throw new Error(`Missing file at path: ${filePath}`);
+    }
+    fs.appendFileSync(filePath, `${utils_1.toCommandValue(message)}${os.EOL}`, {
+        encoding: 'utf8'
+    });
+}
+exports.issueCommand = issueCommand;
+//# sourceMappingURL=file-command.js.map
 
 /***/ }),
 
@@ -8509,6 +8571,7 @@ var __importStar = (this && this.__importStar) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const os = __importStar(__webpack_require__(87));
+const utils_1 = __webpack_require__(82);
 /**
  * Commands
  *
@@ -8563,13 +8626,13 @@ class Command {
     }
 }
 function escapeData(s) {
-    return (s || '')
+    return utils_1.toCommandValue(s)
         .replace(/%/g, '%25')
         .replace(/\r/g, '%0D')
         .replace(/\n/g, '%0A');
 }
 function escapeProperty(s) {
-    return (s || '')
+    return utils_1.toCommandValue(s)
         .replace(/%/g, '%25')
         .replace(/\r/g, '%0D')
         .replace(/\n/g, '%0A')
@@ -8823,6 +8886,8 @@ var __importStar = (this && this.__importStar) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const command_1 = __webpack_require__(431);
+const file_command_1 = __webpack_require__(102);
+const utils_1 = __webpack_require__(82);
 const os = __importStar(__webpack_require__(87));
 const path = __importStar(__webpack_require__(622));
 /**
@@ -8845,11 +8910,21 @@ var ExitCode;
 /**
  * Sets env variable for this action and future actions in the job
  * @param name the name of the variable to set
- * @param val the value of the variable
+ * @param val the value of the variable. Non-string values will be converted to a string via JSON.stringify
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function exportVariable(name, val) {
-    process.env[name] = val;
-    command_1.issueCommand('set-env', { name }, val);
+    const convertedVal = utils_1.toCommandValue(val);
+    process.env[name] = convertedVal;
+    const filePath = process.env['GITHUB_ENV'] || '';
+    if (filePath) {
+        const delimiter = '_GitHubActionsFileCommandDelimeter_';
+        const commandValue = `${name}<<${delimiter}${os.EOL}${convertedVal}${os.EOL}${delimiter}`;
+        file_command_1.issueCommand('ENV', commandValue);
+    }
+    else {
+        command_1.issueCommand('set-env', { name }, convertedVal);
+    }
 }
 exports.exportVariable = exportVariable;
 /**
@@ -8865,7 +8940,13 @@ exports.setSecret = setSecret;
  * @param inputPath
  */
 function addPath(inputPath) {
-    command_1.issueCommand('add-path', {}, inputPath);
+    const filePath = process.env['GITHUB_PATH'] || '';
+    if (filePath) {
+        file_command_1.issueCommand('PATH', inputPath);
+    }
+    else {
+        command_1.issueCommand('add-path', {}, inputPath);
+    }
     process.env['PATH'] = `${inputPath}${path.delimiter}${process.env['PATH']}`;
 }
 exports.addPath = addPath;
@@ -8888,12 +8969,22 @@ exports.getInput = getInput;
  * Sets the value of an output.
  *
  * @param     name     name of the output to set
- * @param     value    value to store
+ * @param     value    value to store. Non-string values will be converted to a string via JSON.stringify
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function setOutput(name, value) {
     command_1.issueCommand('set-output', { name }, value);
 }
 exports.setOutput = setOutput;
+/**
+ * Enables or disables the echoing of commands into stdout for the rest of the step.
+ * Echoing is disabled by default if ACTIONS_STEP_DEBUG is not set.
+ *
+ */
+function setCommandEcho(enabled) {
+    command_1.issue('echo', enabled ? 'on' : 'off');
+}
+exports.setCommandEcho = setCommandEcho;
 //-----------------------------------------------------------------------
 // Results
 //-----------------------------------------------------------------------
@@ -8911,6 +9002,13 @@ exports.setFailed = setFailed;
 // Logging Commands
 //-----------------------------------------------------------------------
 /**
+ * Gets whether Actions Step Debug is on or not
+ */
+function isDebug() {
+    return process.env['RUNNER_DEBUG'] === '1';
+}
+exports.isDebug = isDebug;
+/**
  * Writes debug message to user log
  * @param message debug message
  */
@@ -8920,18 +9018,18 @@ function debug(message) {
 exports.debug = debug;
 /**
  * Adds an error issue
- * @param message error issue message
+ * @param message error issue message. Errors will be converted to string via toString()
  */
 function error(message) {
-    command_1.issue('error', message);
+    command_1.issue('error', message instanceof Error ? message.toString() : message);
 }
 exports.error = error;
 /**
  * Adds an warning issue
- * @param message warning issue message
+ * @param message warning issue message. Errors will be converted to string via toString()
  */
 function warning(message) {
-    command_1.issue('warning', message);
+    command_1.issue('warning', message instanceof Error ? message.toString() : message);
 }
 exports.warning = warning;
 /**
@@ -8989,8 +9087,9 @@ exports.group = group;
  * Saves state for current action, the state can only be retrieved by this action's post job execution.
  *
  * @param     name     name of the state to store
- * @param     value    value to store
+ * @param     value    value to store. Non-string values will be converted to a string via JSON.stringify
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function saveState(name, value) {
     command_1.issueCommand('save-state', { name }, value);
 }
@@ -9275,10 +9374,11 @@ function connect(host = 'localhost', username, port = 22, privateKey, password, 
     });
 }
 function executeCommand(ssh, command) {
+    var _a;
     return __awaiter(this, void 0, void 0, function* () {
         console.log(`Executing command: ${command}`);
         try {
-            yield ssh.exec(command, [], {
+            const { code } = yield ssh.exec(command, [], {
                 stream: "both",
                 onStdout(chunk) {
                     console.log(chunk.toString("utf8"));
@@ -9287,10 +9387,14 @@ function executeCommand(ssh, command) {
                     console.log(chunk.toString("utf8"));
                 }
             });
+            console.log("command exited with code " + code);
+            if (code > 0) {
+                throw Error(`Command exited with code ${code}`);
+            }
             console.log("✅ SSH Action finished.");
         }
         catch (err) {
-            console.error(`⚠️ An error happened executing command ${command}.`, err);
+            console.error(`⚠️ An error happened executing command ${command}.`, (_a = err === null || err === void 0 ? void 0 : err.message) !== null && _a !== void 0 ? _a : err);
             core.setFailed(err.message);
             process.abort();
         }
@@ -18391,7 +18495,7 @@ exports.keyboardFunction = password => (name, instructions, instructionsLang, pr
 /***/ 724:
 /***/ (function(module) {
 
-module.exports = {"_args":[["ssh2-streams@0.4.10","/Users/garygrossgarten/Dev/things/github-action-ssh"]],"_from":"ssh2-streams@0.4.10","_id":"ssh2-streams@0.4.10","_inBundle":false,"_integrity":"sha512-8pnlMjvnIZJvmTzUIIA5nT4jr2ZWNNVHwyXfMGdRJbug9TpI3kd99ffglgfSWqujVv/0gxwMsDn9j9RVst8yhQ==","_location":"/ssh2-streams","_phantomChildren":{},"_requested":{"type":"version","registry":true,"raw":"ssh2-streams@0.4.10","name":"ssh2-streams","escapedName":"ssh2-streams","rawSpec":"0.4.10","saveSpec":null,"fetchSpec":"0.4.10"},"_requiredBy":["/ssh2"],"_resolved":"https://registry.npmjs.org/ssh2-streams/-/ssh2-streams-0.4.10.tgz","_spec":"0.4.10","_where":"/Users/garygrossgarten/Dev/things/github-action-ssh","author":{"name":"Brian White","email":"mscdex@mscdex.net"},"bugs":{"url":"https://github.com/mscdex/ssh2-streams/issues"},"dependencies":{"asn1":"~0.2.0","bcrypt-pbkdf":"^1.0.2","streamsearch":"~0.1.2"},"description":"SSH2 and SFTP(v3) client/server protocol streams for node.js","engines":{"node":">=5.2.0"},"homepage":"https://github.com/mscdex/ssh2-streams#readme","keywords":["ssh","ssh2","sftp","secure","protocol","streams","client","server"],"licenses":[{"type":"MIT","url":"http://github.com/mscdex/ssh2-streams/raw/master/LICENSE"}],"main":"./index","name":"ssh2-streams","repository":{"type":"git","url":"git+ssh://git@github.com/mscdex/ssh2-streams.git"},"scripts":{"test":"node test/test.js"},"version":"0.4.10"};
+module.exports = {"name":"ssh2-streams","version":"0.4.10","author":"Brian White <mscdex@mscdex.net>","description":"SSH2 and SFTP(v3) client/server protocol streams for node.js","main":"./index","engines":{"node":">=5.2.0"},"dependencies":{"asn1":"~0.2.0","bcrypt-pbkdf":"^1.0.2","streamsearch":"~0.1.2"},"scripts":{"test":"node test/test.js"},"keywords":["ssh","ssh2","sftp","secure","protocol","streams","client","server"],"licenses":[{"type":"MIT","url":"http://github.com/mscdex/ssh2-streams/raw/master/LICENSE"}],"repository":{"type":"git","url":"http://github.com/mscdex/ssh2-streams.git"}};
 
 /***/ }),
 
